@@ -1,0 +1,2 @@
+*.safetensors filter=lfs diff=lfs merge=lfs -text
+roberta_kornli_final/model.safetensors filter=lfs diff=lfs merge=lfs -text
