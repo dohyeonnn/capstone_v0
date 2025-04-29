@@ -1,59 +1,62 @@
 import os
 import requests
 import zipfile
+import time
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import torch.nn.functional as F
 
-
-def download_file_from_google_drive(id, destination):
-    URL = "https://docs.google.com/uc?export=download"
-
-    session = requests.Session()
-
-    response = session.get(URL, params={"id": id}, stream=True)
-    token = get_confirm_token(response)
-
-    if token:
-        params = {"id": id, "confirm": token}
-        response = session.get(URL, params=params, stream=True)
-
-    save_response_content(response, destination)
-
-
-def get_confirm_token(response):
-    for key, value in response.cookies.items():
-        if key.startswith("download_warning"):
-            return value
-    return None
-
-
-def save_response_content(response, destination):
-    CHUNK_SIZE = 32768
-
-    with open(destination, "wb") as f:
-        for chunk in response.iter_content(CHUNK_SIZE):
-            if chunk:  # filter out keep-alive new chunks
-                f.write(chunk)
-
-
-# 실제 사용하는 부분
+# 0. 경로 설정
 model_dir = "./roberta_kornli_final"
 model_zip = "./roberta_kornli_final.zip"
-file_id = "1R6c_Gcq595ii4ay32NPQMYt_Lp-bBEa8"  # 형님 드라이브 파일 ID
+gdrive_url = "https://drive.google.com/uc?export=download&id=1R6c_Gcq595ii4ay32NPQMYt_Lp-bBEa8"  # 형님 드라이브 링크
 
-if not os.path.exists(model_dir):
-    download_file_from_google_drive(file_id, model_zip)
 
-    with zipfile.ZipFile(model_zip, "r") as zip_ref:
-        zip_ref.extractall("./")
+def safe_download_and_extract_zip():
+    try:
+        # 폴더가 이미 있으면 다운로드 생략
+        if os.path.exists(model_dir) and os.path.isdir(model_dir):
+            print("[INFO] 모델 폴더가 이미 존재합니다. 다운로드 생략.")
+            return
 
-    os.remove(model_zip)
+        print("[INFO] 모델 zip 파일 다운로드 시작...")
+        with requests.get(gdrive_url, stream=True, timeout=60) as r:
+            r.raise_for_status()
+            with open(model_zip, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
 
-# 1. GPU 사용 가능 여부 확인 및 device 설정
+        print("[INFO] 다운로드 완료. 압축 해제 중...")
+        with zipfile.ZipFile(model_zip, "r") as zip_ref:
+            zip_ref.extractall("./")
+
+        print("[INFO] 압축 해제 완료.")
+        os.remove(model_zip)
+
+        # 검증: 모델 폴더가 생겼는지 확인
+        if not os.path.exists(model_dir):
+            raise FileNotFoundError(
+                f"[ERROR] 압축 후 모델 폴더가 없습니다: {model_dir}"
+            )
+
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] 다운로드 실패: {e}")
+        raise RuntimeError("모델 zip 파일 다운로드 중 문제가 발생했습니다.")
+    except zipfile.BadZipFile:
+        print("[ERROR] zip 파일이 손상되었습니다.")
+        raise RuntimeError("압축 해제 중 오류 발생 (zip 파일 손상).")
+    except Exception as e:
+        print(f"[ERROR] 예기치 못한 에러 발생: {e}")
+        raise RuntimeError("모델 로딩 초기화 중 예기치 못한 오류가 발생했습니다.")
+
+
+# 1. 다운로드 및 압축 해제
+safe_download_and_extract_zip()
+
+# 2. 모델 로딩
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# 2. 모델 및 토크나이저 불러오기
 tokenizer = AutoTokenizer.from_pretrained(model_dir)
 model = AutoModelForSequenceClassification.from_pretrained(model_dir)
 model.to(device)
