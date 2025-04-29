@@ -1,6 +1,8 @@
 streamlit
-openai
-transformers
-torch
-python-dotenv
 requests
+beautifulsoup4
+openai
+torch
+transformers
+bert-score
+python-dotenv
